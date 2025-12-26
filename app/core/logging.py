@@ -1,6 +1,14 @@
 import logging
 import sys
-from typing import Any
+import contextvars
+
+request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_ctx_var.get()
+        return True
 
 def setup_logging(log_level: str = "INFO") -> None:
     """
@@ -10,11 +18,12 @@ def setup_logging(log_level: str = "INFO") -> None:
     root_logger.setLevel(log_level)
 
     formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        "%(asctime)s - %(name)s - %(levelname)s - %(request_id)s - %(message)s"
     )
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
+    handler.addFilter(RequestIdFilter())
     
     # Remove existing handlers to avoid duplicates
     root_logger.handlers = []

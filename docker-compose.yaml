@@ -12,6 +12,17 @@ services:
       - REDIS_HOST=redis
     depends_on:
       - redis
+      - worker
+
+  worker:
+    build: .
+    command: python -m app.worker
+    volumes:
+      - .:/app
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
 
   redis:
     image: redis:alpine

@@ -1,11 +1,12 @@
 # Fraud Email Signup Verification
 
-A robust, production-ready microservice designed to detect and prevent fraudulent email signups in real-time. This service analyzes email addresses using multiple risk signals including syntax validation, domain reputation, MX record verification, entropy analysis, and velocity checks.
+A robust microservice designed to detect and prevent fraudulent email signups in real-time. It analyzes email addresses using multiple risk signals (syntax validation, domain reputation, MX verification, entropy, velocity, IP intelligence, domain age, patterns) and returns an actionable decision.
 
 ## 🚀 Features
 
 *   **Real-time Risk Analysis**: Instant scoring of email signups.
 *   **Risk Scoring & Classification**: Provides a score (0-100) and actionable levels (LOW, MEDIUM, HIGH) with recommended actions (ALLOW, CHALLENGE, BLOCK).
+*   **Explainability**: Returns a `reasons` array showing which signals contributed to the score.
 *   **Comprehensive Checks**:
     *   **Syntax Validation**: Ensures email adheres to standard formats.
     *   **Disposable Domain Detection**: Checks against a known list of disposable/temporary email providers (backed by Redis).
@@ -19,14 +20,19 @@ A robust, production-ready microservice designed to detect and prevent fraudulen
     *   **Email Deliverability (SMTP)**: Optionally verifies if mailbox actually exists via SMTP protocol.
     *   **Webhook Notifications**: Real-time alerts for high-risk signups.
     *   **Admin Dashboard**: Beautiful web UI for monitoring fraud statistics and IP activity.
+*   **Background Enrichment (Queue + Worker)**: Use `POST /api/v1/analyze/fast` for low-latency decisions and enrich results asynchronously via a Redis-backed worker.
 *   **Signal Normalization**: Returns a normalized version of the email for consistent storage (handling aliases and case insensitivity).
 *   **High Performance**: Built with FastAPI and Redis for low-latency responses.
+*   **Observability**:
+    *   **Request IDs**: Accepts `X-Request-ID` and returns it in responses.
+    *   **Prometheus Metrics**: Exposes `/metrics` with request + signal + cache + enrichment metrics.
+*   **Admin Security**: Admin endpoints require `X-Admin-API-Key` when configured (and can fail-closed in non-dev).
 
 ## 🛠️ Tech Stack
 
 *   **Language**: Python 3.11+
 *   **Framework**: FastAPI
-*   **Database**: Redis (for caching, blacklists, and rate limiting)
+*   **Database**: Redis (for caching, blacklists, rate limiting, and background jobs)
 *   **Containerization**: Docker & Docker Compose
 *   **Testing**: Pytest
 
@@ -45,7 +51,7 @@ A robust, production-ready microservice designed to detect and prevent fraudulen
     ```
 
 2.  **Start the service**
-    Use Docker Compose to build and start the API and Redis services.
+    Use Docker Compose to build and start the API, Redis, and the background worker.
     ```bash
     docker-compose up --build
     ```
@@ -53,6 +59,7 @@ A robust, production-ready microservice designed to detect and prevent fraudulen
     The API will be available at `http://localhost:8000`.
     - **API Documentation**: `http://localhost:8000/docs`
     - **Admin Dashboard**: `http://localhost:8000/dashboard`
+    - **Prometheus Metrics**: `http://localhost:8000/metrics`
 
 ## 📖 API Documentation
 
@@ -85,6 +92,14 @@ Analyzes an email address and returns a risk profile.
 {
   "email": "test.user+spam@disposable.com",
   "normalized_email": "test.user@disposable.com",
+  "reasons": [
+    {
+      "code": "DISPOSABLE_DOMAIN",
+      "points": 90,
+      "message": "Domain disposable.com is a known disposable email provider",
+      "meta": { "domain": "disposable.com" }
+    }
+  ],
   "risk_summary": {
     "score": 90,
     "level": "HIGH",
@@ -110,6 +125,34 @@ Analyzes an email address and returns a risk profile.
 }
 ```
 
+### Fast Analyze + Background Enrichment
+
+Use this endpoint when you want a **very fast response** and are OK enriching slow signals asynchronously.
+
+- **Endpoint**: `POST /api/v1/analyze/fast`
+- **Response** includes:
+  - `enrichment.status`: `DISABLED` or `PENDING` (later becomes `COMPLETE` in the stored result)
+  - `enrichment.job_id`: non-null when background enrichment is enabled
+
+Poll results:
+
+- **Endpoint**: `GET /api/v1/results/{job_id}`
+
+### Request IDs
+
+- Send: `X-Request-ID: <your-id>`
+- API returns: `X-Request-ID` response header on every request
+
+### Prometheus Metrics
+
+- **Endpoint**: `GET /metrics`
+- Includes:
+  - Request counters/latency
+  - Per-signal latency (MX / WHOIS / IP intel)
+  - Decision counts
+  - Cache hit/miss/error counts
+  - Enrichment job lifecycle counters
+
 ### 📚 Response Field Reference
 
 Detailed explanation of all response parameters to help developers integrate the API logic.
@@ -122,6 +165,7 @@ Detailed explanation of all response parameters to help developers integrate the
 | `normalized_email` | `string` | The canonical version of the email. It is lowercased, and any alias (part after `+`) is removed (e.g., `user+tag@gmail.com` -> `user@gmail.com`). Use this for checking duplicate accounts. |
 | `risk_summary` | `object` | Contains the aggregated risk assessment. |
 | `signals` | `object` | Detailed flags for each check performed. |
+| `reasons` | `array` | Explainability: list of `{code, points, message, meta?}` contributions. |
 
 #### `risk_summary` Object
 
@@ -167,14 +211,45 @@ You can configure the service using environment variables. Create a `.env` file 
 REDIS_HOST=redis
 REDIS_PORT=6379
 
+# Environment
+# dev: allows insecure conveniences (like leaving admin key empty)
+# prod/staging: fail-closed when secrets are missing
+ENVIRONMENT=dev
+
+# Admin API Key (recommended)
+ADMIN_API_KEY=secret
+
 # Webhook URLs (comma-separated)
 WEBHOOK_URLS=https://your-webhook-url.com/alerts,https://backup-webhook.com/notify
 
 # SMTP Email Verification (Warning: Can be slow and unreliable)
 ENABLE_SMTP_VERIFICATION=false
 
-# Risk Thresholds
-RISK_SCORE_THRESHOLD=70
+# Background enrichment (fast path + worker)
+ENABLE_BACKGROUND_ENRICHMENT=true
+
+# IP intelligence provider behavior
+IP_INTEL_VERIFY_SSL=true
+IP_INTEL_FALLBACK_PROVIDERS=ipwhois,ipapi_http
+
+# Scoring knobs (optional)
+RISK_LOW_MAX=30
+RISK_MEDIUM_MAX=70
+SCORE_DISPOSABLE_DOMAIN=90
+SCORE_NO_MX=100
+ENTROPY_THRESHOLD=4.5
+SCORE_HIGH_ENTROPY=30
+VELOCITY_IP_LIMIT_PER_HOUR=10
+SCORE_VELOCITY_BREACH=40
+SCORE_VPN_OR_PROXY=50
+SCORE_DATACENTER_IP=30
+NEW_DOMAIN_AGE_DAYS=30
+SCORE_NEW_DOMAIN=60
+SCORE_PATTERN_SEQUENTIAL=40
+SCORE_PATTERN_NUMBER_SUFFIX=25
+SCORE_PATTERN_SIMILAR_TO_RECENT=35
+SCORE_SMTP_UNDELIVERABLE=70
+SCORE_SMTP_CATCH_ALL=20
 ```
 
 ### Webhooks
@@ -196,7 +271,8 @@ Configure webhook URLs to receive real-time notifications when high-risk signups
       "level": "HIGH",
       "action": "BLOCK"
     },
-    "signals": { /* all fraud signals */ }
+    "signals": { /* all fraud signals */ },
+    "reasons": [ /* explainability contributions */ ]
   }
 }
 ```
@@ -225,7 +301,7 @@ To run the test suite, you can execute pytest inside the running container or lo
 
 **Using Docker:**
 ```bash
-docker-compose exec app pytest
+docker-compose exec api pytest
 ```
 
 **Locally:**

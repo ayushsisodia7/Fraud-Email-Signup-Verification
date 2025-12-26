@@ -39,7 +39,8 @@ class WebhookService:
         risk_summary: dict,
         signals: dict,
         ip_address: str,
-        user_agent: str
+        user_agent: str,
+        reasons: list[dict] | None = None,
     ) -> bool:
         """
         Send webhook notification for high-risk signup attempts
@@ -72,7 +73,8 @@ class WebhookService:
                 "ip_address": ip_address,
                 "user_agent": user_agent,
                 "risk_summary": risk_summary,
-                "signals": signals
+                "signals": signals,
+                "reasons": reasons or []
             }
         }
         

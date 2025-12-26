@@ -1,14 +1,16 @@
 """
 Admin Dashboard API Endpoints for viewing fraud stats
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from starlette.requests import Request
 from typing import List, Optional
 import redis.asyncio as redis
 from datetime import datetime, timedelta
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.security import require_admin_api_key
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin_api_key)])
 logger = get_logger(__name__)
 
 # Initialize Redis
@@ -102,13 +104,17 @@ async def get_recent_emails():
         raise HTTPException(status_code=500, detail="Failed to fetch recent emails")
 
 
-@router.post("/admin/clear-velocity/{ip_address}")
-async def clear_ip_velocity(ip_address: str):
+@router.post("/clear-velocity/{ip_address}")
+async def clear_ip_velocity(ip_address: str, request: Request):
     """Clear velocity counter for a specific IP (admin action)"""
     try:
         r = await get_redis()
         key = f"velocity:ip:{ip_address}"
         deleted = await r.delete(key)
+
+        logger.info(
+            f"ADMIN_ACTION clear_velocity ip={ip_address} deleted={deleted} client={getattr(request.client,'host',None)}"
+        )
         
         return {
             "success": deleted > 0,

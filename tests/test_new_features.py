@@ -2,26 +2,25 @@
 Tests for new fraud detection features
 """
 import pytest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
+import json
 from app.services.ip_intelligence import IPIntelligenceService
 from app.services.domain_age import DomainAgeService
 from app.services.pattern_detection import PatternDetectionService
-import redis.asyncio as redis
+from tests.fake_redis import AsyncFakeRedis
 
 
 @pytest.fixture
 async def redis_client():
-    """Create Redis client for testing"""
-    client = redis.from_url("redis://localhost:6379", encoding="utf-8", decode_responses=True)
-    yield client
-    await client.flushdb()  # Clean up after tests
-    await client.close()
+    """In-memory Redis fake for deterministic tests"""
+    yield AsyncFakeRedis()
 
 
 class TestIPIntelligence:
     """Test IP intelligence service"""
     
-    @pytest.mark.asyncio
-    async def test_private_ip_detection(self):
+    def test_private_ip_detection(self):
         """Test that private IPs are correctly identified"""
         service = IPIntelligenceService()
         
@@ -45,23 +44,84 @@ class TestIPIntelligence:
         assert result["is_datacenter"] == False
         assert result["country"] is None
 
+    @pytest.mark.asyncio
+    async def test_ip_intel_cache_hit_avoids_http(self):
+        """Second call should hit Redis cache and not call external HTTP."""
+        redis_mock = AsyncMock()
+        redis_mock.get = AsyncMock(side_effect=[None, json.dumps({
+            "is_vpn": False,
+            "is_proxy": False,
+            "is_datacenter": True,
+            "country": "United States",
+            "asn": "AS123",
+            "org": "Example Cloud",
+        })])
+        redis_mock.set = AsyncMock()
+
+        service = IPIntelligenceService(redis_client=redis_mock, cache_ttl_seconds=3600, negative_cache_ttl_seconds=60)
+
+        class DummyResponse:
+            status_code = 200
+            def json(self):
+                return {
+                    "country_name": "United States",
+                    "asn": "AS123",
+                    "org": "Example Cloud",
+                }
+
+        class DummyClient:
+            async def __aenter__(self): return self
+            async def __aexit__(self, exc_type, exc, tb): return False
+            async def get(self, url):  # noqa: ARG002
+                return DummyResponse()
+
+        with patch("app.services.ip_intelligence.httpx.AsyncClient", return_value=DummyClient()) as mock_client:
+            res1 = await service.analyze_ip("8.8.8.8")
+            res2 = await service.analyze_ip("8.8.8.8")
+
+        assert res1["country"] == "United States"
+        assert res2["country"] == "United States"
+        # external client constructed only once (second call should return from cache before constructing)
+        assert mock_client.call_count == 1
+        assert redis_mock.set.call_count == 1
+
 
 class TestDomainAge:
     """Test domain age verification service"""
     
     @pytest.mark.asyncio
-    async def test_well_known_domain(self):
-        """Test checking a well-known, old domain"""
-        service = DomainAgeService()
-        result = await service.check_domain_age("google.com")
+    async def test_domain_age_cache_hit_avoids_whois(self):
+        """Second call should hit Redis cache and not call WHOIS."""
+        redis_mock = AsyncMock()
+        # first call: no cache; second call: cached creation_date
+        creation = datetime.now(timezone.utc) - timedelta(days=3650)
+        redis_mock.get = AsyncMock(side_effect=[None, json.dumps({"creation_date": creation.isoformat()})])
+        redis_mock.set = AsyncMock()
+
+        service = DomainAgeService(redis_client=redis_mock, cache_ttl_seconds=3600, negative_cache_ttl_seconds=60)
+
+        class DummyWhois:
+            creation_date = creation
+
+        with patch("app.services.domain_age.whois.whois", return_value=DummyWhois()) as mock_whois:
+            result1 = await service.check_domain_age("example.com")
+            result2 = await service.check_domain_age("example.com")
         
-        # Google is old, should not be flagged as new
-        assert result["is_new_domain"] == False
-        assert result["is_suspicious"] == False
+        assert result1["is_new_domain"] == False
+        assert result2["is_new_domain"] == False
+        assert result1["creation_date"] is not None
+        assert result2["creation_date"] is not None
         
-        # Age should be available (though WHOIS can be unreliable)
-        if result["age_days"] is not None:
-            assert result["age_days"] > 30
+        assert mock_whois.call_count == 1
+        assert redis_mock.set.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_new_domain_threshold_is_configurable(self):
+        """If suspicious_age_days is low, even a ~10 day domain should be marked new."""
+        creation = datetime.now(timezone.utc) - timedelta(days=10)
+        service = DomainAgeService(redis_client=None, suspicious_age_days=15)
+        result = service._build_result("example.com", creation)
+        assert result["is_new_domain"] is True
 
 
 class TestPatternDetection:

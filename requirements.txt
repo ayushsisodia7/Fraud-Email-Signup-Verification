@@ -12,3 +12,4 @@ respx>=0.20.2
 mock>=5.1.0
 python-whois>=0.8.0
 python-Levenshtein>=0.25.0
+prometheus-client>=0.20.0

@@ -10,6 +10,32 @@ def risk_engine():
         engine = RiskEngine()
         engine.domain_manager = AsyncMock()
         engine.domain_manager.is_disposable.return_value = False
+        # Avoid network/external dependencies in unit tests
+        engine.ip_intelligence = AsyncMock()
+        engine.ip_intelligence.analyze_ip = AsyncMock(return_value={
+            "is_vpn": False,
+            "is_proxy": False,
+            "is_datacenter": False,
+            "country": None,
+            "asn": None,
+            "org": None,
+        })
+        engine.domain_age_service = AsyncMock()
+        engine.domain_age_service.check_domain_age = AsyncMock(return_value={
+            "creation_date": None,
+            "age_days": None,
+            "is_new_domain": False,
+            "is_suspicious": False,
+        })
+        engine.pattern_detection = AsyncMock()
+        engine.pattern_detection.analyze_patterns = AsyncMock(return_value={
+            "pattern_type": None,
+            "is_sequential": False,
+            "has_number_suffix": False,
+            "is_similar_to_recent": False,
+        })
+        engine.webhook_service = AsyncMock()
+        engine.webhook_service.notify_high_risk_signup = AsyncMock()
         return engine
 
 def test_entropy_calculation(risk_engine):

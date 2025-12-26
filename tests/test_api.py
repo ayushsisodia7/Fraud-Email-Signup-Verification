@@ -10,6 +10,7 @@ def mock_risk_engine():
     mock_engine.analyze = AsyncMock(return_value={
         "email": "test@example.com",
         "normalized_email": "test@example.com",
+        "reasons": [],
         "risk_summary": {
             "score": 0,
             "level": "LOW",
