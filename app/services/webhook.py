@@ -31,6 +31,13 @@ class WebhookService:
         urls = [url.strip() for url in webhook_urls_str.split(',') if url.strip()]
         logger.info(f"Loaded {len(urls)} webhook URL(s)")
         return urls
+
+    def _httpx_verify(self):
+        # If a custom CA bundle is provided, prefer it.
+        ca_bundle = (getattr(settings, "WEBHOOK_CA_BUNDLE", "") or "").strip()
+        if ca_bundle:
+            return ca_bundle
+        return bool(getattr(settings, "WEBHOOK_VERIFY_SSL", True))
     
     async def notify_high_risk_signup(
         self,
@@ -79,8 +86,8 @@ class WebhookService:
         }
         
         success_count = 0
-        
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+
+        async with httpx.AsyncClient(timeout=self.timeout, verify=self._httpx_verify()) as client:
             for webhook_url in self.webhook_urls:
                 try:
                     response = await client.post(
@@ -124,7 +131,7 @@ class WebhookService:
             }
         }
         
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, verify=self._httpx_verify()) as client:
             for webhook_url in self.webhook_urls:
                 try:
                     await client.post(webhook_url, json=payload)

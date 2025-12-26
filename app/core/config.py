@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     
     # Webhooks (comma-separated URLs)
     WEBHOOK_URLS: str = ""
+    # Webhook TLS verification
+    # - Keep True in production
+    # - If you're on a corporate MITM proxy or missing CA chain inside containers, set false in dev
+    WEBHOOK_VERIFY_SSL: bool = True
+    # Optional path to a CA bundle file inside the container
+    WEBHOOK_CA_BUNDLE: str = ""
 
     # Admin auth (optional but strongly recommended)
     # If empty, admin endpoints will be left unprotected (dev-only).

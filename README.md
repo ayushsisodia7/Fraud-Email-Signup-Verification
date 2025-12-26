@@ -222,6 +222,9 @@ ADMIN_API_KEY=secret
 # Webhook URLs (comma-separated)
 WEBHOOK_URLS=https://your-webhook-url.com/alerts,https://backup-webhook.com/notify
 
+# Webhook TLS verification (keep true in prod; can set false in dev if your container lacks a trusted CA chain)
+WEBHOOK_VERIFY_SSL=true
+
 # SMTP Email Verification (Warning: Can be slow and unreliable)
 ENABLE_SMTP_VERIFICATION=false
 
