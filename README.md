@@ -54,7 +54,7 @@ A robust, production-ready microservice designed to detect and prevent fraudulen
 
 Analyzes an email address and returns a risk profile.
 
-**Request Body**:
+**Request Body**
 
 ```json
 {
@@ -64,7 +64,14 @@ Analyzes an email address and returns a risk profile.
 }
 ```
 
-**Response**:
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `email` | `string` | Yes | The email address to analyze. |
+| `ip_address` | `string` | Yes | The IP address of the user attempting signup. Used for velocity checks. |
+| `user_agent` | `string` | Yes | The browser User-Agent string. |
+
+
+**Response**
 
 ```json
 {
@@ -85,13 +92,40 @@ Analyzes an email address and returns a risk profile.
 }
 ```
 
-**Risk Levels**:
+### 📚 Response Field Reference
 
-| Score | Level | Action | Description |
+Detailed explanation of all response parameters to help developers integrate the API logic.
+
+#### Root Objects
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `email` | `string` | The original email address provided in the request. |
+| `normalized_email` | `string` | The canonical version of the email. It is lowercased, and any alias (part after `+`) is removed (e.g., `user+tag@gmail.com` -> `user@gmail.com`). Use this for checking duplicate accounts. |
+| `risk_summary` | `object` | Contains the aggregated risk assessment. |
+| `signals` | `object` | Detailed flags for each check performed. |
+
+#### `risk_summary` Object
+
+This object dictates the final decision the client should take.
+
+| Field | Type | Possible Values | Description |
 | :--- | :--- | :--- | :--- |
-| 0 - 30 | **LOW** | ALLOW | legitimate user, standard signup. |
-| 31 - 70 | **MEDIUM** | CHALLENGE | Suspicious signals detected (e.g., high entropy, unknown domain). Recommend CAPTCHA or email verification. |
-| 71+ | **HIGH** | BLOCK | Strong evidence of fraud (e.g., disposable domain, invalid MX, velocity breach). |
+| `score` | `integer` | `0` to `100` | The calculated risk score. Higher means riskier. <br>• **0-30**: Safe <br>• **31-70**: Suspicious <br>• **71-100**: Fraudulent |
+| `level` | `string` | `"LOW"`, `"MEDIUM"`, `"HIGH"` | A human-readable classification of the score. |
+| `action` | `string` | `"ALLOW"`, `"CHALLENGE"`, `"BLOCK"` | The recommended action for the client application. <br>• **ALLOW**: Proceed with signup. <br>• **CHALLENGE**: Trigger additional verification (Phone OTP, Captcha). <br>• **BLOCK**: Reject the signup request immediately. |
+
+#### `signals` Object
+
+Granular details on *why* a certain score was assigned.
+
+| Field | Type | Possible Values | Description |
+| :--- | :--- | :--- | :--- |
+| `is_disposable` | `boolean` | `true`, `false` | **True** if the domain belongs to a known temporary/disposable email provider (e.g., mailinator.com). This is a strong fraud signal. |
+| `mx_found` | `boolean` | `true`, `false` | **True** if the domain has valid DNS MX records. **False** implies the domain cannot receive email (likely invalid or fake). |
+| `velocity_breach`| `boolean` | `true`, `false` | **True** if the request IP or Domain has exceeded the allowed signup rate (e.g., >10 signups per hour). |
+| `entropy_score` | `float` | `0.0` - `8.0`+ | A measure of randomness in the local part of the email. <br>• **< 3.5**: Normal (e.g., `john.doe`) <br>• **> 4.5**: High/Random (e.g., `a82j19s`) |
+| `is_alias` | `boolean` | `true`, `false` | **True** if the email uses a `+` alias. While often legitimate, multiple aliases pointing to the same inbox can indicate account farming. |
 
 ## 🧪 Running Tests
 
