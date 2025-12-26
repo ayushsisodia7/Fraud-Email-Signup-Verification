@@ -9,6 +9,8 @@ from app.services.domain_manager import DomainManager
 from app.services.ip_intelligence import IPIntelligenceService
 from app.services.domain_age import DomainAgeService
 from app.services.pattern_detection import PatternDetectionService
+from app.services.email_deliverability import EmailDeliverabilityService
+from app.services.webhook import WebhookService
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -22,6 +24,8 @@ class RiskEngine:
         self.ip_intelligence = IPIntelligenceService()
         self.domain_age_service = DomainAgeService()
         self.pattern_detection = PatternDetectionService(self.redis)
+        self.email_deliverability = EmailDeliverabilityService()
+        self.webhook_service = WebhookService()
         self.major_providers = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com"}
 
     def calculate_entropy(self, text: str) -> float:
@@ -188,6 +192,27 @@ class RiskEngine:
             score += 35
             logger.warning(f"Similar email pattern detected: {email}")
 
+        # NEW Layer 9: SMTP Email Deliverability Check (Optional)
+        if settings.ENABLE_SMTP_VERIFICATION:
+            deliverability_info = await self.email_deliverability.verify_email_deliverability(email)
+            signals["smtp_deliverable"] = deliverability_info["is_deliverable"]
+            signals["smtp_valid"] = deliverability_info["smtp_valid"]
+            signals["catch_all_domain"] = deliverability_info["catch_all"]
+            
+            if not deliverability_info["is_deliverable"] and not deliverability_info["catch_all"]:
+                # Email doesn't exist and it's not a catch-all domain
+                score += 70
+                logger.warning(f"Email not deliverable: {email}")
+            elif deliverability_info["catch_all"]:
+                # Catch-all domains are suspicious (accept any email)
+                score += 20
+                logger.info(f"Catch-all domain detected: {domain}")
+        else:
+            # SMTP verification disabled
+            signals["smtp_deliverable"] = None
+            signals["smtp_valid"] = None
+            signals["catch_all_domain"] = None
+
         # Final Result
         level = "LOW"
         action = "ALLOW"
@@ -219,6 +244,18 @@ class RiskEngine:
         }
         
         logger.info(f"Analysis result for {email}: {result['risk_summary']}")
+        
+        # Send webhook notification for high-risk signups
+        if level in ["MEDIUM", "HIGH"]:
+            await self.webhook_service.notify_high_risk_signup(
+                email=email,
+                normalized_email=normalized_email,
+                risk_summary=result["risk_summary"],
+                signals=signals,
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+        
         return result
 
     async def close(self):
