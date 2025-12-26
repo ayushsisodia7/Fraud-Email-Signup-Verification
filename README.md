@@ -13,6 +13,9 @@ A robust, production-ready microservice designed to detect and prevent fraudulen
     *   **Entropy Analysis**: Detects randomly generated email addresses (e.g., `a8f93kd@...`) using Shannon entropy.
     *   **Velocity Limiting**: Tracks signup attempts by IP and Domain to prevent automated abuse and spam attacks.
     *   **Alias Detection**: Identifies email aliases (e.g., `user+test@gmail.com`).
+    *   **VPN/Proxy Detection**: Identifies users connecting through VPNs, proxies, or datacenter IPs.
+    *   **Domain Age Verification**: Flags newly registered domains (<30 days) using WHOIS lookup.
+    *   **Pattern Detection**: Detects sequential patterns, number suffixes, and similar emails using Levenshtein distance.
 *   **Signal Normalization**: Returns a normalized version of the email for consistent storage (handling aliases and case insensitivity).
 *   **High Performance**: Built with FastAPI and Redis for low-latency responses.
 
@@ -87,7 +90,17 @@ Analyzes an email address and returns a risk profile.
     "mx_found": true,
     "velocity_breach": false,
     "entropy_score": 3.45,
-    "is_alias": true
+    "is_alias": true,
+    "is_vpn": false,
+    "is_proxy": false,
+    "is_datacenter": false,
+    "ip_country": "United States",
+    "domain_age_days": 5,
+    "is_new_domain": true,
+    "pattern_detected": "NUMBER_SUFFIX",
+    "is_sequential": false,
+    "has_number_suffix": false,
+    "is_similar_to_recent": false
   }
 }
 ```
@@ -126,6 +139,16 @@ Granular details on *why* a certain score was assigned.
 | `velocity_breach`| `boolean` | `true`, `false` | **True** if the request IP or Domain has exceeded the allowed signup rate (e.g., >10 signups per hour). |
 | `entropy_score` | `float` | `0.0` - `8.0`+ | A measure of randomness in the local part of the email. <br>• **< 3.5**: Normal (e.g., `john.doe`) <br>• **> 4.5**: High/Random (e.g., `a82j19s`) |
 | `is_alias` | `boolean` | `true`, `false` | **True** if the email uses a `+` alias. While often legitimate, multiple aliases pointing to the same inbox can indicate account farming. |
+| `is_vpn` | `boolean` | `true`, `false` | **True** if the IP address appears to be a VPN service. |
+| `is_proxy` | `boolean` | `true`, `false` | **True** if the IP address appears to be a proxy server. |
+| `is_datacenter` | `boolean` | `true`, `false` | **True** if the IP originates from a datacenter/cloud provider rather than a residential ISP. |
+| `ip_country` | `string` | Country name or `null` | Geographic country of the IP address. |
+| `domain_age_days` | `integer` | Number or `null` | Age of the email domain in days since registration. |
+| `is_new_domain` | `boolean` | `true`, `false` | **True** if the domain was registered less than 30 days ago. |
+| `pattern_detected` | `string` | `"SEQUENTIAL"`, `"NUMBER_SUFFIX"`, `"SIMILAR_TO_RECENT"`, `null` | Type of suspicious pattern detected in the email. |
+| `is_sequential` | `boolean` | `true`, `false` | **True** if email follows sequential pattern (e.g., `user1@domain.com`, `user2@domain.com`). |
+| `has_number_suffix` | `boolean` | `true`, `false` | **True** if email has 2+ numbers at the end (e.g., `john123@domain.com`). |
+| `is_similar_to_recent` | `boolean` | `true`, `false` | **True** if email is very similar (85%+ match) to a recently submitted email. |
 
 ## 🧪 Running Tests
 

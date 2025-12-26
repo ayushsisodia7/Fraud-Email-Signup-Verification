@@ -6,6 +6,9 @@ import redis.asyncio as redis
 from app.core.config import settings
 from app.services.validators import validate_email_syntax
 from app.services.domain_manager import DomainManager
+from app.services.ip_intelligence import IPIntelligenceService
+from app.services.domain_age import DomainAgeService
+from app.services.pattern_detection import PatternDetectionService
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -16,6 +19,9 @@ class RiskEngine:
         # but for simplicity we keep it here. Ideally it should be injected.
         self.redis = redis.from_url(f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}", encoding="utf-8", decode_responses=True)
         self.domain_manager = DomainManager(self.redis)
+        self.ip_intelligence = IPIntelligenceService()
+        self.domain_age_service = DomainAgeService()
+        self.pattern_detection = PatternDetectionService(self.redis)
         self.major_providers = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com"}
 
     def calculate_entropy(self, text: str) -> float:
@@ -82,7 +88,19 @@ class RiskEngine:
             "is_disposable": False,
             "mx_found": True,
             "velocity_breach": False,
-            "entropy_score": 0.0
+            "entropy_score": 0.0,
+            "is_alias": False,
+            # New signals
+            "is_vpn": False,
+            "is_proxy": False,
+            "is_datacenter": False,
+            "ip_country": None,
+            "domain_age_days": None,
+            "is_new_domain": False,
+            "pattern_detected": None,
+            "is_sequential": False,
+            "has_number_suffix": False,
+            "is_similar_to_recent": False
         }
 
         # Layer 1: Syntax
@@ -104,9 +122,6 @@ class RiskEngine:
         
         normalized_email = f"{normalized_local}@{domain}"
         signals["is_alias"] = is_alias
-        # Optional: We could score aliases differently, but for now we just flag it.
-        # Some systems might treat aliases as 'Medium' risk if strict uniqueness is required.
-        # We'll keep score 0 to allow legit usage, but the caller can use the signal.
 
         # Layer 2: Domain Blacklist (Redis)
         is_disposable = await self.domain_manager.is_disposable(domain)
@@ -133,6 +148,45 @@ class RiskEngine:
         if velocity_breach:
             score += 40
             signals["velocity_breach"] = True
+
+        # NEW Layer 6: VPN/Proxy Detection
+        ip_info = await self.ip_intelligence.analyze_ip(ip_address)
+        signals["is_vpn"] = ip_info["is_vpn"]
+        signals["is_proxy"] = ip_info["is_proxy"]
+        signals["is_datacenter"] = ip_info["is_datacenter"]
+        signals["ip_country"] = ip_info["country"]
+        
+        if ip_info["is_vpn"] or ip_info["is_proxy"]:
+            score += 50
+            logger.warning(f"VPN/Proxy detected for IP {ip_address}")
+        elif ip_info["is_datacenter"]:
+            score += 30
+            logger.info(f"Datacenter IP detected: {ip_address}")
+
+        # NEW Layer 7: Domain Age Check
+        domain_age_info = await self.domain_age_service.check_domain_age(domain)
+        signals["domain_age_days"] = domain_age_info["age_days"]
+        signals["is_new_domain"] = domain_age_info["is_new_domain"]
+        
+        if domain_age_info["is_new_domain"]:
+            score += 60
+            logger.warning(f"New domain detected: {domain} (age: {domain_age_info['age_days']} days)")
+
+        # NEW Layer 8: Pattern Detection
+        pattern_info = await self.pattern_detection.analyze_patterns(email, normalized_email)
+        signals["pattern_detected"] = pattern_info["pattern_type"]
+        signals["is_sequential"] = pattern_info["is_sequential"]
+        signals["has_number_suffix"] = pattern_info["has_number_suffix"]
+        signals["is_similar_to_recent"] = pattern_info["is_similar_to_recent"]
+        
+        if pattern_info["is_sequential"]:
+            score += 40
+        elif pattern_info["has_number_suffix"]:
+            score += 25
+        
+        if pattern_info["is_similar_to_recent"]:
+            score += 35
+            logger.warning(f"Similar email pattern detected: {email}")
 
         # Final Result
         level = "LOW"
@@ -169,3 +223,4 @@ class RiskEngine:
 
     async def close(self):
         await self.redis.close()
+
