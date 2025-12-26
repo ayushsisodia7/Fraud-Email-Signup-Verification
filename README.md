@@ -16,6 +16,9 @@ A robust, production-ready microservice designed to detect and prevent fraudulen
     *   **VPN/Proxy Detection**: Identifies users connecting through VPNs, proxies, or datacenter IPs.
     *   **Domain Age Verification**: Flags newly registered domains (<30 days) using WHOIS lookup.
     *   **Pattern Detection**: Detects sequential patterns, number suffixes, and similar emails using Levenshtein distance.
+    *   **Email Deliverability (SMTP)**: Optionally verifies if mailbox actually exists via SMTP protocol.
+    *   **Webhook Notifications**: Real-time alerts for high-risk signups.
+    *   **Admin Dashboard**: Beautiful web UI for monitoring fraud statistics and IP activity.
 *   **Signal Normalization**: Returns a normalized version of the email for consistent storage (handling aliases and case insensitivity).
 *   **High Performance**: Built with FastAPI and Redis for low-latency responses.
 
@@ -48,6 +51,8 @@ A robust, production-ready microservice designed to detect and prevent fraudulen
     ```
 
     The API will be available at `http://localhost:8000`.
+    - **API Documentation**: `http://localhost:8000/docs`
+    - **Admin Dashboard**: `http://localhost:8000/dashboard`
 
 ## 📖 API Documentation
 
@@ -149,6 +154,70 @@ Granular details on *why* a certain score was assigned.
 | `is_sequential` | `boolean` | `true`, `false` | **True** if email follows sequential pattern (e.g., `user1@domain.com`, `user2@domain.com`). |
 | `has_number_suffix` | `boolean` | `true`, `false` | **True** if email has 2+ numbers at the end (e.g., `john123@domain.com`). |
 | `is_similar_to_recent` | `boolean` | `true`, `false` | **True** if email is very similar (85%+ match) to a recently submitted email. |
+| `smtp_deliverable` | `boolean` | `true`, `false`, `null` | **True** if SMTP verification confirms the mailbox exists. `null` if disabled. |
+| `smtp_valid` | `boolean` | `true`, `false`, `null` | **True** if SMTP handshake succeeded. |
+| `catch_all_domain` | `boolean` | `true`, `false`, `null` | **True** if the domain accepts all email addresses (catch-all). |
+
+## ⚙️ Configuration
+
+You can configure the service using environment variables. Create a `.env` file in the project root:
+
+```env
+# Redis Configuration
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# Webhook URLs (comma-separated)
+WEBHOOK_URLS=https://your-webhook-url.com/alerts,https://backup-webhook.com/notify
+
+# SMTP Email Verification (Warning: Can be slow and unreliable)
+ENABLE_SMTP_VERIFICATION=false
+
+# Risk Thresholds
+RISK_SCORE_THRESHOLD=70
+```
+
+### Webhooks
+
+Configure webhook URLs to receive real-time notifications when high-risk signups are detected:
+
+**Webhook Payload Format:**
+```json
+{
+  "event": "high_risk_signup",
+  "timestamp": "2025-12-26T15:30:00Z",
+  "data": {
+    "email": "suspicious@example.com",
+    "normalized_email": "suspicious@example.com",
+    "ip_address": "8.8.8.8",
+    "user_agent": "Mozilla/5.0...",
+    "risk_summary": {
+      "score": 85,
+      "level": "HIGH",
+      "action": "BLOCK"
+    },
+    "signals": { /* all fraud signals */ }
+  }
+}
+```
+
+## 📊 Admin Dashboard
+
+Access the admin dashboard at `http://localhost:8000/dashboard` to:
+
+*   View real-time fraud statistics
+*   Monitor most active IP addresses
+*   Track recent email signups
+*   Identify velocity abuse patterns
+
+The dashboard auto-refreshes every 30 seconds.
+
+**Dashboard Features:**
+- 📈 Live statistics (unique IPs, domains, recent signups)
+- 🌐 IP activity monitoring with risk levels
+- 📧 Recent email tracking
+-  Auto-refresh capabilities
+
 
 ## 🧪 Running Tests
 
